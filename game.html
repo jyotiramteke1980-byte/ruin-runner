@@ -1,0 +1,739 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8" />
+  <title>Ruin Runner</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    body {
+      width: 100%;
+      height: 100vh;
+      background: radial-gradient(circle at top, #1a1f2e 0%, #0d1118 40%, #05080d 100%);
+      display: grid;
+      place-items: center;
+      font-family: 'Arial', sans-serif;
+      overflow: hidden;
+    }
+    #gameContainer {
+      position: relative;
+      width: 960px;
+      height: 640px;
+      background: #000;
+      border: 4px solid rgba(255, 255, 255, 0.1);
+      box-shadow: 0 0 40px rgba(0, 0, 0, 0.8), inset 0 0 20px rgba(255, 255, 255, 0.02);
+      overflow: hidden;
+    }
+    canvas {
+      display: block;
+      background: #0c0f18;
+    }
+    .overlay {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      background: rgba(0, 0, 0, 0.6);
+      backdrop-filter: blur(3px);
+      z-index: 100;
+      font-weight: bold;
+      color: #f4f4ff;
+      text-align: center;
+    }
+    .overlay.hidden {
+      display: none !important;
+    }
+    .overlay h1 {
+      font-size: 64px;
+      color: #f6cd5a;
+      margin-bottom: 20px;
+      text-shadow: 0 4px 12px rgba(0, 0, 0, 0.8);
+      letter-spacing: 2px;
+    }
+    .overlay h2 {
+      font-size: 48px;
+      color: #ff8888;
+      margin-bottom: 30px;
+      text-shadow: 0 2px 8px rgba(0, 0, 0, 0.8);
+    }
+    .overlay p {
+      font-size: 18px;
+      margin: 8px 0;
+      color: #dcdce6;
+    }
+    .overlay .subtitle {
+      font-size: 16px;
+      color: #aaaaaa;
+      margin-bottom: 25px;
+    }
+    .controls {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 15px;
+      margin: 20px 0;
+      font-size: 14px;
+      line-height: 1.6;
+    }
+    .controls p {
+      margin: 4px 0;
+      text-align: left;
+    }
+    .score-display {
+      font-size: 20px;
+      color: #f6cd5a;
+      margin-top: 20px;
+    }
+  </style>
+</head>
+<body>
+  <div id="gameContainer">
+    <canvas id="gameCanvas" width="960" height="640"></canvas>
+    <div id="menuOverlay" class="overlay">
+      <h1 id="gameTitle">RUIN RUNNER</h1>
+      <p class="subtitle">Temple Run-inspired Endless Runner</p>
+      <div class="controls">
+        <div>
+          <p><strong>A/D</strong> - Move Lane</p>
+          <p><strong>W</strong> - Jump</p>
+          <p><strong>S</strong> - Slide</p>
+        </div>
+        <div>
+          <p><strong>Space</strong> - Activate Skill</p>
+          <p><strong>Enter</strong> - Start Run</p>
+          <p><strong>ESC</strong> - Quit</p>
+        </div>
+      </div>
+      <p style="margin-top: 20px; font-size: 13px; color: #82d8ff;">👹 SHADOW GUARDIAN CHASING 👹</p>
+      <p style="font-size: 13px; color: #82d8ff;">🛡️ Shield • 🧲 Magnet • ⚡ Boost • ❄️ Slow Time</p>
+    </div>
+    <div id="gameOverOverlay" class="overlay hidden">
+      <h2>RUN FAILED</h2>
+      <p id="finalScore" style="font-size: 24px; color: #f6cd5a; margin: 15px 0;">Score: 0</p>
+      <p id="bestScoreText" style="font-size: 18px; color: #ffd66d; margin: 10px 0;">Best: 0</p>
+      <p style="margin-top: 25px; font-size: 20px; color: #f5df82;">Press ENTER to Restart</p>
+    </div>
+  </div>
+
+  <script>
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    const WIDTH = 960;
+    const HEIGHT = 640;
+
+    const LANES = [280, 480, 680];
+    const GAME_TITLES = [
+      'RUIN RUNNER',
+      'ANCIENT ESCAPE',
+      'CURSED SPRINT',
+      'ARTIFACT CHASE',
+      'TEMPLE WHISPER',
+      'SHADOW VAULT'
+    ];
+
+    const COLORS = {
+      player: '#74d4ff',
+      playerDark: '#2e5d8d',
+      enemy: '#b01c2e',
+      shield: '#5cc0ff',
+      magnet: '#a678ff',
+      boost: '#ffad4c',
+      slow: '#7ee1aa',
+      gold: '#f5c952',
+      ui: '#f4f4ff',
+      danger: '#ff5c5c',
+      warning: '#ffd66d'
+    };
+
+    class Player {
+      constructor() {
+        this.lane = 1;
+        this.targetLane = 1;
+        this.x = LANES[1];
+        this.y = HEIGHT - 150;
+        this.vy = 0;
+        this.jumping = false;
+        this.sliding = false;
+        this.slideTimer = 0;
+        this.health = 3;
+        this.shieldTimer = 0;
+        this.magnetTimer = 0;
+        this.boostTimer = 0;
+        this.slowTimer = 0;
+        this.invincibleTimer = 0;
+        this.damageFlash = 0;
+      }
+
+      setLane(dir) {
+        this.targetLane = Math.max(0, Math.min(2, this.targetLane + dir));
+      }
+
+      jump() {
+        if (!this.jumping && this.slideTimer <= 0) {
+          this.vy = -750;
+          this.jumping = true;
+        }
+      }
+
+      slide() {
+        if (!this.jumping) {
+          this.slideTimer = 0.6;
+          this.sliding = true;
+        }
+      }
+
+      update(dt) {
+        // Smooth lane transition
+        this.x += (LANES[this.targetLane] - this.x) * Math.min(1, 16 * dt);
+
+        if (this.jumping) {
+          this.y += this.vy * dt;
+          this.vy += 1850 * dt;
+          if (this.y >= HEIGHT - 150) {
+            this.y = HEIGHT - 150;
+            this.vy = 0;
+            this.jumping = false;
+          }
+        }
+
+        if (this.slideTimer > 0) {
+          this.slideTimer -= dt;
+          this.sliding = this.slideTimer > 0;
+        }
+
+        this.shieldTimer = Math.max(0, this.shieldTimer - dt);
+        this.magnetTimer = Math.max(0, this.magnetTimer - dt);
+        this.boostTimer = Math.max(0, this.boostTimer - dt);
+        this.slowTimer = Math.max(0, this.slowTimer - dt);
+        this.invincibleTimer = Math.max(0, this.invincibleTimer - dt);
+        this.damageFlash = Math.max(0, this.damageFlash - dt);
+      }
+
+      takeDamage() {
+        if (this.invincibleTimer > 0 || this.shieldTimer > 0) {
+          this.invincibleTimer = 1.0;
+          this.shieldTimer = 0;
+          return false;
+        }
+        this.health--;
+        this.damageFlash = 0.3;
+        this.invincibleTimer = 1.4;
+        return true;
+      }
+    }
+
+    class Obstacle {
+      constructor(lane, type, z) {
+        this.lane = lane;
+        this.type = type;
+        this.z = z;
+      }
+    }
+
+    class Pickup {
+      constructor(lane, type, z) {
+        this.lane = lane;
+        this.type = type;
+        this.z = z;
+        this.bob = Math.random() * Math.PI * 2;
+      }
+    }
+
+    class Particle {
+      constructor(x, y, color, life = 0.8) {
+        this.x = x;
+        this.y = y;
+        this.vx = (Math.random() - 0.5) * 150;
+        this.vy = -100 - Math.random() * 150;
+        this.color = color;
+        this.life = life;
+        this.maxLife = life;
+        this.size = 4 + Math.random() * 6;
+      }
+
+      update(dt) {
+        this.x += this.vx * dt;
+        this.y += this.vy * dt;
+        this.vy += 400 * dt;
+        this.life -= dt;
+      }
+
+      draw(ctx) {
+        const alpha = Math.max(0, this.life / this.maxLife);
+        ctx.fillStyle = this.color.replace(')', `, ${alpha})`).replace('rgb', 'rgba');
+        ctx.beginPath();
+        ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+
+    class Game {
+      constructor() {
+        this.state = 'menu';
+        this.player = new Player();
+        this.obstacles = [];
+        this.pickups = [];
+        this.particles = [];
+        this.score = 0;
+        this.bestScore = localStorage.getItem('bestScore') || 0;
+        this.gameSpeed = 400;
+        this.enemyDistance = 300;
+        this.spawnTimer = 1.2;
+        this.pickupTimer = 4.5;
+        this.gameTitle = GAME_TITLES[Math.floor(Math.random() * GAME_TITLES.length)];
+        this.lastTime = 0;
+      }
+
+      reset() {
+        this.player = new Player();
+        this.obstacles = [];
+        this.pickups = [];
+        this.particles = [];
+        this.score = 0;
+        this.gameSpeed = 400;
+        this.enemyDistance = 300;
+        this.spawnTimer = 1.2;
+        this.pickupTimer = 4.5;
+        this.gameTitle = GAME_TITLES[Math.floor(Math.random() * GAME_TITLES.length)];
+      }
+
+      start() {
+        this.reset();
+        this.state = 'playing';
+        document.getElementById('menuOverlay').classList.add('hidden');
+        document.getElementById('gameOverOverlay').classList.add('hidden');
+      }
+
+      spawnObstacle() {
+        const lane = Math.floor(Math.random() * 3);
+        const types = ['barrier', 'pit', 'low'];
+        const type = types[Math.floor(Math.random() * types.length)];
+        this.obstacles.push(new Obstacle(lane, type, 1500));
+      }
+
+      spawnPickup() {
+        const lane = Math.floor(Math.random() * 3);
+        const types = ['shield', 'magnet', 'boost', 'slow'];
+        const type = types[Math.floor(Math.random() * types.length)];
+        this.pickups.push(new Pickup(lane, type, 1500));
+      }
+
+      collectPickup(pickup) {
+        if (pickup.type === 'shield') this.player.shieldTimer = 8;
+        if (pickup.type === 'magnet') this.player.magnetTimer = 8;
+        if (pickup.type === 'boost') this.player.boostTimer = 5;
+        if (pickup.type === 'slow') this.player.slowTimer = 5;
+        this.pickups = this.pickups.filter(p => p !== pickup);
+        this.score += 150;
+        this.createParticles(LANES[pickup.lane], HEIGHT - 150, COLORS[pickup.type], 15);
+      }
+
+      handleCollision(obstacle) {
+        if (obstacle.lane !== this.player.targetLane) return;
+
+        let canAvoid = false;
+        if (obstacle.type === 'barrier' && this.player.jumping) canAvoid = true;
+        if (obstacle.type === 'pit' && this.player.jumping) canAvoid = true;
+        if (obstacle.type === 'low' && this.player.sliding) canAvoid = true;
+
+        if (canAvoid) return;
+
+        if (this.player.shieldTimer > 0) {
+          this.player.shieldTimer = 0;
+          this.player.invincibleTimer = 1.2;
+          this.obstacles = this.obstacles.filter(o => o !== obstacle);
+          this.score += 100;
+          this.createParticles(LANES[obstacle.lane], HEIGHT - 150, COLORS.shield, 12);
+          return;
+        }
+
+        if (this.player.invincibleTimer > 0) {
+          this.obstacles = this.obstacles.filter(o => o !== obstacle);
+          return;
+        }
+
+        if (this.player.takeDamage()) {
+          this.enemyDistance = Math.max(50, this.enemyDistance - 50);
+          this.obstacles = this.obstacles.filter(o => o !== obstacle);
+          if (this.player.health <= 0) {
+            this.endGame();
+          }
+        }
+      }
+
+      endGame() {
+        this.state = 'gameover';
+        this.bestScore = Math.max(this.bestScore, Math.floor(this.score));
+        localStorage.setItem('bestScore', this.bestScore);
+        document.getElementById('finalScore').textContent = `Score: ${Math.floor(this.score)}`;
+        document.getElementById('bestScoreText').textContent = `Best: ${this.bestScore}`;
+        document.getElementById('gameOverOverlay').classList.remove('hidden');
+      }
+
+      createParticles(x, y, color, count) {
+        for (let i = 0; i < count; i++) {
+          this.particles.push(new Particle(x, y, color));
+        }
+      }
+
+      update(dt) {
+        if (this.state !== 'playing') return;
+
+        this.score += dt * 25;
+        this.player.update(dt);
+
+        let worldSpeed = this.gameSpeed;
+        if (this.player.slowTimer > 0) worldSpeed *= 0.65;
+        if (this.player.boostTimer > 0) worldSpeed *= 1.6;
+
+        this.gameSpeed = 400 + this.score * 2.5;
+        this.enemyDistance -= dt * (20 + this.score * 0.06);
+
+        if (this.enemyDistance <= 0) this.endGame();
+
+        this.spawnTimer -= dt;
+        if (this.spawnTimer <= 0) {
+          this.spawnObstacle();
+          this.spawnTimer = Math.max(0.8, 1.5 - this.score * 0.005);
+        }
+
+        this.pickupTimer -= dt;
+        if (this.pickupTimer <= 0) {
+          this.spawnPickup();
+          this.pickupTimer = 5 + Math.random() * 3;
+        }
+
+        for (let i = this.pickups.length - 1; i >= 0; i--) {
+          const p = this.pickups[i];
+          p.z -= worldSpeed * dt;
+          if (p.lane === this.player.targetLane && p.z < 150 && p.z > 20) {
+            this.collectPickup(p);
+          } else if (p.z < -100) {
+            this.pickups.splice(i, 1);
+          }
+        }
+
+        for (let i = this.obstacles.length - 1; i >= 0; i--) {
+          const o = this.obstacles[i];
+          o.z -= worldSpeed * dt;
+          if (o.lane === this.player.targetLane && o.z < 150 && o.z > 0) {
+            this.handleCollision(o);
+          } else if (o.z < -150) {
+            this.obstacles.splice(i, 1);
+          }
+        }
+
+        if (this.player.magnetTimer > 0) {
+          for (const p of this.pickups) {
+            if (p.lane !== this.player.targetLane && Math.abs(p.z - 100) < 600) {
+              p.lane = this.player.targetLane;
+            }
+          }
+        }
+
+        for (let i = this.particles.length - 1; i >= 0; i--) {
+          this.particles[i].update(dt);
+          if (this.particles[i].life <= 0) {
+            this.particles.splice(i, 1);
+          }
+        }
+      }
+
+      drawBackground() {
+        for (let y = 0; y < HEIGHT; y++) {
+          const ratio = y / HEIGHT;
+          const r = Math.round(12 * (1 - ratio) + 80 * ratio);
+          const g = Math.round(15 * (1 - ratio) + 50 * ratio);
+          const b = Math.round(24 * (1 - ratio) + 30 * ratio);
+          ctx.fillStyle = `rgb(${r}, ${g}, ${b})`;
+          ctx.fillRect(0, y, WIDTH, 1);
+        }
+
+        ctx.fillStyle = '#e8d4a0';
+        ctx.beginPath();
+        ctx.arc(800, 80, 45, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.fillStyle = '#1e2a3a';
+        for (let i = 0; i < 7; i++) {
+          const x = 30 + i * 155;
+          const y = 400 + (i % 2) * 30;
+          ctx.beginPath();
+          ctx.moveTo(x, y);
+          ctx.lineTo(x + 120, y);
+          ctx.lineTo(x + 60, y - 140);
+          ctx.closePath();
+          ctx.fill();
+        }
+      }
+
+      drawRoad() {
+        ctx.fillStyle = '#2a3035';
+        ctx.beginPath();
+        ctx.moveTo(200, 160);
+        ctx.lineTo(760, 160);
+        ctx.lineTo(920, HEIGHT);
+        ctx.lineTo(40, HEIGHT);
+        ctx.closePath();
+        ctx.fill();
+
+        ctx.strokeStyle = '#b8945a';
+        ctx.lineWidth = 5;
+        for (let i = 1; i < 3; i++) {
+          const x = 200 + (760 - 200) * (i / 3);
+          ctx.beginPath();
+          ctx.moveTo(x, 160);
+          ctx.lineTo(x, HEIGHT);
+          ctx.stroke();
+        }
+
+        ctx.strokeStyle = '#4a5a6a';
+        ctx.lineWidth = 1;
+        for (let i = 0; i < 12; i++) {
+          const y = 160 + (HEIGHT - 160) * (i / 12);
+          ctx.beginPath();
+          ctx.moveTo(200, y);
+          ctx.lineTo(760, y);
+          ctx.stroke();
+        }
+      }
+
+      drawPickups() {
+        for (const p of this.pickups) {
+          const depth = 1 - p.z / 1500;
+          const x = LANES[p.lane];
+          const y = 150 + (1 - depth) * 430;
+          const size = 12 + depth * 28;
+          const color = COLORS[p.type];
+          const bob = Math.sin(p.bob + Date.now() / 300) * 3;
+
+          if (p.type === 'shield') {
+            ctx.strokeStyle = color;
+            ctx.lineWidth = 3;
+            ctx.beginPath();
+            ctx.arc(x, y + bob, size, 0, Math.PI * 2);
+            ctx.stroke();
+            ctx.beginPath();
+            ctx.arc(x, y + bob, size - 6, 0, Math.PI * 2);
+            ctx.stroke();
+          } else if (p.type === 'magnet') {
+            ctx.strokeStyle = color;
+            ctx.lineWidth = 3;
+            ctx.strokeRect(x - size, y - size + bob, size * 2, size * 2);
+            ctx.beginPath();
+            ctx.moveTo(x - size, y + bob);
+            ctx.lineTo(x + size, y + bob);
+            ctx.stroke();
+          } else if (p.type === 'boost') {
+            ctx.fillStyle = color;
+            ctx.beginPath();
+            ctx.moveTo(x, y - size + bob);
+            ctx.lineTo(x + size, y + bob);
+            ctx.lineTo(x, y + size + bob);
+            ctx.lineTo(x - size, y + bob);
+            ctx.closePath();
+            ctx.fill();
+          } else if (p.type === 'slow') {
+            ctx.strokeStyle = color;
+            ctx.lineWidth = 3;
+            ctx.beginPath();
+            ctx.arc(x, y + bob, size, 0, Math.PI * 2);
+            ctx.stroke();
+            ctx.beginPath();
+            ctx.moveTo(x, y - size + bob);
+            ctx.lineTo(x, y + size + bob);
+            ctx.stroke();
+          }
+        }
+      }
+
+      drawObstacles() {
+        for (const o of this.obstacles) {
+          const depth = 1 - o.z / 1500;
+          const x = LANES[o.lane];
+          const y = 170 + (1 - depth) * 420;
+          const scale = 0.8 + depth * 2;
+
+          if (o.type === 'barrier') {
+            const w = 40 * scale;
+            const h = 35 * scale;
+            ctx.fillStyle = '#6a7580';
+            ctx.fillRect(x - w, y - h, w * 2, h * 2);
+            ctx.fillStyle = '#f89d45';
+            ctx.fillRect(x - w + 8, y - h + 8, w * 2 - 16, h * 2 - 16);
+          } else if (o.type === 'pit') {
+            const w = 50 * scale;
+            const h = 15 * scale;
+            ctx.fillStyle = '#1a1c24';
+            ctx.fillRect(x - w, y - h, w * 2, h * 2);
+            ctx.strokeStyle = '#4a5a7a';
+            ctx.lineWidth = 3;
+            ctx.strokeRect(x - w, y - h, w * 2, h * 2);
+          } else if (o.type === 'low') {
+            const w = 65 * scale;
+            const h = 12 * scale;
+            ctx.fillStyle = '#8b4513';
+            ctx.fillRect(x - w, y - h, w * 2, h * 2);
+            ctx.fillStyle = '#a85c2e';
+            ctx.fillRect(x - w + 6, y - h + 3, w * 2 - 12, h * 2 - 6);
+          }
+        }
+      }
+
+      drawPlayer() {
+        const x = this.player.x;
+        const y = this.player.y;
+        const color = this.player.damageFlash > 0 ? '#ffdd66' : COLORS.player;
+
+        if (this.player.sliding) {
+          ctx.fillStyle = color;
+          ctx.fillRect(x - 38, y - 8, 76, 40);
+        } else if (this.player.jumping) {
+          ctx.fillStyle = color;
+          ctx.fillRect(x - 26, y - 48, 52, 68);
+        } else {
+          ctx.fillStyle = color;
+          ctx.fillRect(x - 32, y - 28, 64, 58);
+        }
+
+        ctx.fillStyle = '#ffffff';
+        ctx.beginPath();
+        ctx.arc(x, y - 48, 20, 0, Math.PI * 2);
+        ctx.fill();
+
+        if (this.player.shieldTimer > 0) {
+          ctx.strokeStyle = COLORS.shield;
+          ctx.lineWidth = 5;
+          ctx.beginPath();
+          ctx.arc(x, y - 8, 50, 0, Math.PI * 2);
+          ctx.stroke();
+        }
+
+        if (this.player.invincibleTimer > 0) {
+          ctx.strokeStyle = COLORS.warning;
+          ctx.lineWidth = 3;
+          ctx.beginPath();
+          ctx.arc(x, y - 8, 52, 0, Math.PI * 2);
+          ctx.stroke();
+        }
+      }
+
+      drawEnemy() {
+        const screen = Math.max(0.05, this.enemyDistance / 300);
+        const x = WIDTH / 2;
+        const y = HEIGHT - 80 + (1 - screen) * 80;
+        const w = 130 + (1 - screen) * 50;
+        const h = 100 + (1 - screen) * 60;
+
+        ctx.fillStyle = COLORS.enemy;
+        ctx.fillRect(x - w / 2, y - h / 2, w, h);
+
+        ctx.fillStyle = '#1a1a1a';
+        ctx.beginPath();
+        ctx.arc(x - 25, y - 20, 8, 0, Math.PI * 2);
+        ctx.arc(x + 25, y - 20, 8, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.fillStyle = '#ff0000';
+        ctx.beginPath();
+        ctx.arc(x - 25, y - 20, 4, 0, Math.PI * 2);
+        ctx.arc(x + 25, y - 20, 4, 0, Math.PI * 2);
+        ctx.fill();
+
+        if (this.enemyDistance < 100) {
+          ctx.fillStyle = 'rgba(255, 0, 0, 0.2)';
+          ctx.fillRect(0, 0, WIDTH, HEIGHT);
+        }
+      }
+
+      drawHUD() {
+        ctx.fillStyle = COLORS.ui;
+        ctx.font = 'bold 24px Arial';
+        ctx.textAlign = 'left';
+        ctx.fillText(`Score: ${Math.floor(this.score)}`, 20, 35);
+
+        ctx.fillStyle = COLORS.danger;
+        ctx.fillText('♥ ' + '♥ '.repeat(Math.max(0, this.player.health)), 20, 70);
+
+        const skills = [];
+        if (this.player.shieldTimer > 0) skills.push(`🛡️ ${this.player.shieldTimer.toFixed(1)}s`);
+        if (this.player.magnetTimer > 0) skills.push(`🧲 ${this.player.magnetTimer.toFixed(1)}s`);
+        if (this.player.boostTimer > 0) skills.push(`⚡ ${this.player.boostTimer.toFixed(1)}s`);
+        if (this.player.slowTimer > 0) skills.push(`❄️ ${this.player.slowTimer.toFixed(1)}s`);
+
+        if (skills.length > 0) {
+          ctx.fillStyle = COLORS.ui;
+          ctx.font = 'bold 14px Arial';
+          ctx.fillText(skills.join(' | '), WIDTH - 280, 35);
+        }
+
+        ctx.fillStyle = COLORS.warning;
+        ctx.font = 'bold 14px Arial';
+        ctx.textAlign = 'right';
+        ctx.fillText(`👹 ${Math.max(0, Math.floor(this.enemyDistance))}m`, WIDTH - 20, HEIGHT - 20);
+      }
+
+      drawMenu() {
+        // Menu drawn via overlay
+      }
+
+      render() {
+        this.drawBackground();
+        this.drawRoad();
+        this.drawPickups();
+        this.drawObstacles();
+        this.drawEnemy();
+        this.drawPlayer();
+
+        for (const p of this.particles) {
+          p.draw(ctx);
+        }
+
+        this.drawHUD();
+      }
+    }
+
+    const game = new Game();
+    document.getElementById('gameTitle').textContent = game.gameTitle;
+
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') game.state = 'menu';
+      if (e.key === 'Enter') {
+        if (game.state === 'menu') game.start();
+        if (game.state === 'gameover') game.start();
+      }
+      if (game.state === 'playing') {
+        if (e.key.toLowerCase() === 'a' || e.key === 'ArrowLeft') game.player.setLane(-1);
+        if (e.key.toLowerCase() === 'd' || e.key === 'ArrowRight') game.player.setLane(1);
+        if (e.key.toLowerCase() === 'w' || e.key === 'ArrowUp') game.player.jump();
+        if (e.key.toLowerCase() === 's' || e.key === 'ArrowDown') game.player.slide();
+        if (e.key === ' ') {
+          e.preventDefault();
+          if (game.player.boostTimer > 0) game.gameSpeed += 180;
+          else if (game.player.slowTimer > 0) game.player.slowTimer = 5;
+          else if (game.player.shieldTimer > 0) game.player.shieldTimer = 8;
+          else if (game.player.magnetTimer > 0) game.player.magnetTimer = 8;
+          else game.player.boostTimer = 3;
+        }
+      }
+    });
+
+    let lastTime = Date.now();
+    function loop() {
+      const now = Date.now();
+      const dt = Math.min((now - lastTime) / 1000, 0.02);
+      lastTime = now;
+
+      game.update(dt);
+      game.render();
+      requestAnimationFrame(loop);
+    }
+
+    loop();
+  </script>
+</body>
+</html>
